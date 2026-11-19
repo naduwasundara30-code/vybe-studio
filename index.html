@@ -23,6 +23,28 @@
   </header>
 
   <main>
+    <!-- Campaign toolbar: save / share / export -->
+    <div id="campaignBar" class="campaign-bar hidden">
+      <div class="cb-info">
+        <b id="cbName"></b>
+        <small id="cbStatus" class="muted"></small>
+      </div>
+      <div class="cb-actions">
+        <button class="primary small" id="saveBtn">Save</button>
+        <button class="ghost" id="shareBtn">Copy share link</button>
+        <div class="menu">
+          <button class="ghost" id="exportBtn" aria-haspopup="true" aria-expanded="false">Export ▾</button>
+          <div class="menu-list hidden" id="exportMenu" role="menu">
+            <button role="menuitem" data-export="pdf">PDF report</button>
+            <button role="menuitem" data-export="json">Campaign file (.json)</button>
+            <button role="menuitem" data-export="csv">Tasks spreadsheet (.csv)</button>
+            <button role="menuitem" data-export="ics">Calendar (.ics)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
     <!-- 01 BUILDER -->
     <section id="builder" class="tab active">
       <h1>Business Input &amp; Campaign Builder</h1>
@@ -102,6 +124,7 @@
       <h1>Campaign Execution Plan</h1>
       <button class="ghost" id="notifyBtn">Enable browser notifications</button>
       <button class="ghost" id="icsBtn">Download calendar (.ics)</button>
+      <button class="ghost" id="csvTasksBtn">Download tasks (.csv)</button>
       <div id="planOut" class="empty">Generate a campaign first.</div>
     </section>
 
@@ -125,11 +148,35 @@
     <!-- 07 HISTORY -->
     <section id="history" class="tab">
       <h1>History &amp; Recommendations</h1>
+      <p class="muted">Campaigns are saved on this device. Press <b>Save</b> to also sync them to the cloud and get a link you can open on any device.</p>
       <button class="primary" id="historyAIBtn">Get recommendations from past campaigns</button>
+      <label class="ghost file-btn">Import campaign file (.json)<input type="file" id="importInput" accept=".json,application/json"></label>
+      <button class="ghost" id="openLinkBtn">Open a share link</button>
       <div id="historyAI"></div>
       <div id="historyOut"></div>
     </section>
   </main>
+
+  <!-- AI marketing assistant -->
+  <button id="chatFab" class="chat-fab" aria-controls="chatPanel" aria-expanded="false">✦ Ask Vybe AI</button>
+  <aside id="chatPanel" class="chat-panel hidden" aria-label="AI marketing assistant">
+    <div class="chat-head">
+      <div><b>Vybe AI assistant</b><br><small id="chatCtx">General marketing help</small></div>
+      <div><button class="icon" id="chatClear" title="Clear conversation">Clear</button><button class="icon" id="chatClose" title="Close" aria-label="Close">✕</button></div>
+    </div>
+    <div id="chatLog" class="chat-log"></div>
+    <div id="chatChips" class="chat-chips">
+      <button>Write 3 Instagram captions for this week</button>
+      <button>How should I spend my budget?</button>
+      <button>Draft a promo email</button>
+      <button>Give me 5 Reel / TikTok video ideas</button>
+      <button>How can I improve my conversions?</button>
+    </div>
+    <form id="chatForm" class="chat-form">
+      <textarea id="chatInput" rows="2" placeholder="Ask anything about your campaign…" required></textarea>
+      <button class="primary small" id="chatSend">Send</button>
+    </form>
+  </aside>
 
   <footer>VYBE STUDIO prototype · AI suggestions should be reviewed before use</footer>
   <script src="app.js"></script>
