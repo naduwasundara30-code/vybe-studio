@@ -12,6 +12,7 @@ document.querySelectorAll("#nav button").forEach((b) =>
   b.addEventListener("click", () => showTab(b.dataset.tab))
 );
 function showTab(id) {
+  if (!document.getElementById(id)) id = "builder";
   document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === id));
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === id));
   if (id === "history") renderHistory();
@@ -21,10 +22,43 @@ function showTab(id) {
 // ---------- Storage (browser localStorage) ----------
 const loadAll = () => JSON.parse(localStorage.getItem(STORE) || "[]");
 const saveAll = (a) => localStorage.setItem(STORE, JSON.stringify(a));
-function saveCurrent() {
-  const all = loadAll().filter((c) => c.id !== current.id);
-  all.unshift(current);
-  saveAll(all);
+// Saves a campaign on this device. touch=true marks it as changed (so the cloud copy is out of date).
+function persist(touch = true, c = current) {
+  if (!c) return false;
+  if (touch) c.updatedAt = new Date().toISOString();
+  const all = loadAll().filter((x) => x.id !== c.id);
+  all.unshift(c);
+  try { saveAll(all); } catch {
+    toast("This device's storage is full. Export or delete old campaigns in History.", true);
+    return false;
+  }
+  if (c === current) renderBar();
+  return true;
+}
+const saveCurrent = () => persist(true);
+
+// ---------- Small UI helpers ----------
+let toastTimer;
+function toast(msg, bad) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.toggle("bad", !!bad);
+  t.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add("hidden"), bad ? 6000 : 3500);
+}
+const slug = (s) => String(s || "campaign").trim().replace(/[^\w\-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "campaign";
+function download(name, content, type) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([content], { type }));
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+async function readJSON(res) {
+  const json = await res.json().catch(() => ({ error: "Invalid response from server" }));
+  if (!res.ok || json.error) throw new Error(json.error || "Request failed");
+  return json;
 }
 
 // ---------- AI call ----------
@@ -41,12 +75,31 @@ async function callAI(module, data) {
 
 // ---------- 01 Builder ----------
 let imageData = null;
-$("#imageInput").addEventListener("change", (e) => {
+// Downscale uploads so they fit in device storage and can be sent to the image AI as a reference.
+function shrinkImage(file, max = 1024) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.width, img.height));
+      const cv = document.createElement("canvas");
+      cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+      const ctx = cv.getContext("2d");
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(img, 0, 0, cv.width, cv.height);
+      URL.revokeObjectURL(img.src);
+      resolve(cv.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = () => reject(new Error("Could not read this image."));
+    img.src = URL.createObjectURL(file);
+  });
+}
+$("#imageInput").addEventListener("change", async (e) => {
   const f = e.target.files[0];
   if (!f) return;
-  const r = new FileReader();
-  r.onload = () => { imageData = r.result; $("#imagePreview").src = imageData; $("#imagePreview").classList.remove("hidden"); };
-  r.readAsDataURL(f);
+  try {
+    imageData = await shrinkImage(f);
+    $("#imagePreview").src = imageData; $("#imagePreview").classList.remove("hidden");
+  } catch (err) { setStatus(err.message, true); }
 });
 
 $("#fillDemo").addEventListener("click", () => {
@@ -80,8 +133,8 @@ $("#campaignForm").addEventListener("submit", async (e) => {
   setStatus("Generating your campaign with AI… (about 10–20 seconds)");
   try {
     const result = await callAI("campaign", inputs);
-    current = { id: Date.now().toString(), createdAt: new Date().toISOString(), inputs, image: imageData, result, tasksDone: {}, performance: null, insights: null };
-    try { saveCurrent(); } catch { current.image = null; saveCurrent(); } // image may be too big for storage
+    current = { id: Date.now().toString(), createdAt: new Date().toISOString(), inputs, image: imageData, result, tasksDone: {}, performance: null, insights: null, images: [], chat: [] };
+    if (!persist()) { current.image = null; persist(); } // image may be too big for storage
     renderAll();
     setStatus("Campaign generated and saved.");
     showTab("analysis");
@@ -94,7 +147,7 @@ $("#campaignForm").addEventListener("submit", async (e) => {
 function setStatus(msg, bad) { const s = $("#status"); s.textContent = msg; s.style.color = bad ? "#B23B2E" : "var(--green)"; }
 
 function renderAll() {
-  renderAnalysis(); renderStrategy(); renderContent(); renderPlan(); renderDashboard();
+  renderAnalysis(); renderStrategy(); renderContent(); renderPlan(); renderDashboard(); renderBar(); renderChat();
 }
 
 // ---------- 02 Analysis ----------
@@ -316,3 +369,12 @@ $("#historyAIBtn").addEventListener("click", async (e) => {
 // ---------- Start: reopen latest campaign ----------
 const latest = loadAll()[0];
 if (latest) { current = latest; renderAll(); }
+
+// ---------- Campaign toolbar + chat panel (basic wiring) ----------
+function renderBar() {
+  const bar = document.getElementById("campaignBar");
+  if (!bar) return;
+  bar.classList.toggle("hidden", !current);
+  if (current) { $("#cbName").textContent = current.inputs?.campaignName || ""; $("#cbStatus").textContent = "Saved on this device"; }
+}
+function renderChat() {}
