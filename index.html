@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VYBE STUDIO – AI Marketing Campaign Generator</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="brand">VYBE <span>STUDIO</span></div>
+    <nav id="nav">
+      <button data-tab="builder" class="active">01 Builder</button>
+      <button data-tab="analysis">02 Analysis</button>
+      <button data-tab="strategy">03 Strategy</button>
+      <button data-tab="content">04 Image Studio</button>
+      <button data-tab="plan">05 Action Plan <span id="badge" class="badge hidden">0</span></button>
+      <button data-tab="dashboard">06 Dashboard</button>
+      <button data-tab="history">07 History</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- 01 BUILDER -->
+    <section id="builder" class="tab active">
+      <h1>Business Input &amp; Campaign Builder</h1>
+      <p class="muted">Fill in your business and campaign details. The AI builds a complete campaign from them.</p>
+      <button type="button" class="ghost" id="fillDemo">Fill with demo data</button>
+      <form id="campaignForm">
+        <fieldset><legend>Business</legend>
+          <label>Brand name<input name="brandName" required></label>
+          <label>Industry<select name="industry">
+            <option>Food &amp; Beverage</option><option>Fashion &amp; Apparel</option><option>Beauty &amp; Wellness</option>
+            <option>Retail</option><option>Education</option><option>Technology</option><option>Services</option><option>Other</option></select></label>
+          <label>Business size<select name="businessSize"><option>Micro (1-9)</option><option>Small (10-49)</option><option>Medium (50-249)</option></select></label>
+          <label>Geographical location<input name="location" required placeholder="City, Country"></label>
+          <label>Website / social links<input name="links" placeholder="https://..."></label>
+        </fieldset>
+
+        <fieldset><legend>Product</legend>
+          <label>Product name<input name="product" required></label>
+          <label>Product category<input name="category" required></label>
+          <label>Price range (min)<input name="priceMin" type="number" min="0"></label>
+          <label>Price range (max)<input name="priceMax" type="number" min="0"></label>
+          <label class="wide">Product features (comma separated)<textarea name="features" rows="2"></textarea></label>
+          <label class="wide">Unique selling proposition<textarea name="usp" rows="2"></textarea></label>
+          <label class="wide">Upload product image<input type="file" id="imageInput" accept="image/*"></label>
+          <img id="imagePreview" class="preview hidden" alt="Product preview">
+        </fieldset>
+
+        <fieldset><legend>Target market</legend>
+          <label>Target audience<input name="audience" required placeholder="e.g. university students"></label>
+          <label>Age range<input name="ageRange" placeholder="18-30"></label>
+          <label>Gender<select name="gender"><option>All</option><option>Female</option><option>Male</option></select></label>
+          <label>Income level<select name="income"><option>Low</option><option selected>Middle</option><option>High</option></select></label>
+          <label class="wide">Interests / lifestyle<input name="interests"></label>
+          <label class="wide">Customer pain points<input name="painPoints"></label>
+          <label class="wide">Main competitors<input name="competitors"></label>
+        </fieldset>
+
+        <fieldset><legend>Campaign</legend>
+          <label>Campaign name<input name="campaignName" required></label>
+          <label>Marketing objective<select name="objective"><option>Brand awareness</option><option>Lead generation</option><option>Increase sales</option><option>Customer retention</option><option>Product launch</option></select></label>
+          <label>Start date<input name="startDate" type="date" required></label>
+          <label>End date<input name="endDate" type="date" required></label>
+          <label>Total budget<input name="budget" type="number" min="0" required></label>
+          <label>Currency<input name="currency" value="USD"></label>
+          <label>Expected revenue<input name="expectedRevenue" type="number" min="0"></label>
+          <label>Expected ROI (%)<input name="expectedROI" type="number"></label>
+          <label class="wide">Preferred channels
+            <div class="checks">
+              <label><input type="checkbox" name="channels" value="Instagram" checked> Instagram</label>
+              <label><input type="checkbox" name="channels" value="Facebook" checked> Facebook</label>
+              <label><input type="checkbox" name="channels" value="TikTok"> TikTok</label>
+              <label><input type="checkbox" name="channels" value="Google Ads"> Google Ads</label>
+              <label><input type="checkbox" name="channels" value="Email"> Email</label>
+              <label><input type="checkbox" name="channels" value="WhatsApp"> WhatsApp</label>
+              <label><input type="checkbox" name="channels" value="Influencers"> Influencers</label>
+            </div></label>
+          <label class="wide">Current marketing strategy<textarea name="currentStrategy" rows="2"></textarea></label>
+          <label>Tone of voice<select name="tone"><option>Friendly</option><option>Professional</option><option>Luxury</option><option>Playful</option><option>Bold</option></select></label>
+        </fieldset>
+
+        <button type="submit" class="primary" id="generateBtn">Generate campaign</button>
+        <p id="status" class="status"></p>
+      </form>
+    </section>
+
+    <!-- 02 ANALYSIS -->
+    <section id="analysis" class="tab"><h1>Marketing Analysis</h1><div id="analysisOut" class="empty">Generate a campaign first.</div></section>
+
+    <!-- 03 STRATEGY -->
+    <section id="strategy" class="tab"><h1>Campaign Execution Strategy</h1><div id="strategyOut" class="empty">Generate a campaign first.</div></section>
+
+    <!-- 04 CONTENT -->
+    <section id="content" class="tab"><h1>Image Studio &amp; Content Suggestions</h1><div id="contentOut" class="empty">Generate a campaign first.</div></section>
+
+    <!-- 05 PLAN -->
+    <section id="plan" class="tab">
+      <h1>Campaign Execution Plan</h1>
+      <button class="ghost" id="notifyBtn">Enable browser notifications</button>
+      <button class="ghost" id="icsBtn">Download calendar (.ics)</button>
+      <div id="planOut" class="empty">Generate a campaign first.</div>
+    </section>
+
+    <!-- 06 DASHBOARD -->
+    <section id="dashboard" class="tab">
+      <h1>Performance &amp; Interactive Dashboard</h1>
+      <p class="muted">Upload a CSV exported from Meta Business Suite, Instagram Insights or Google Analytics.<br>
+      Columns: date, platform, impressions, clicks, conversions, spend, revenue</p>
+      <input type="file" id="csvInput" accept=".csv">
+      <button class="ghost" id="sampleBtn">Load sample data</button>
+      <div id="kpis" class="kpis"></div>
+      <div class="charts">
+        <div class="card"><canvas id="lineChart"></canvas></div>
+        <div class="card"><canvas id="barChart"></canvas></div>
+        <div class="card"><canvas id="pieChart"></canvas></div>
+      </div>
+      <button class="primary hidden" id="insightBtn">Get AI recommendations</button>
+      <div id="insightOut"></div>
+    </section>
+
+    <!-- 07 HISTORY -->
+    <section id="history" class="tab">
+      <h1>History &amp; Recommendations</h1>
+      <button class="primary" id="historyAIBtn">Get recommendations from past campaigns</button>
+      <div id="historyAI"></div>
+      <div id="historyOut"></div>
+    </section>
+  </main>
+
+  <footer>VYBE STUDIO prototype · AI suggestions should be reviewed before use</footer>
+  <script src="app.js"></script>
+</body>
+</html>
