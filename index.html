@@ -22,6 +22,15 @@
     </nav>
   </header>
 
+  <div class="auth-box" id="authBox">
+    <span id="authStatus">Checking cloud connection…</span>
+    <input id="authEmail" type="email" placeholder="Email" autocomplete="email" aria-label="Email">
+    <input id="authPassword" type="password" placeholder="Password" autocomplete="current-password" aria-label="Password">
+    <button type="button" class="auth-btn" id="signInBtn">Sign in</button>
+    <button type="button" class="auth-btn" id="signUpBtn">Create account</button>
+    <button type="button" class="auth-btn hidden" id="signOutBtn">Sign out</button>
+  </div>
+
   <main>
     <!-- 01 BUILDER -->
     <section id="builder" class="tab active">
