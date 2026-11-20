@@ -3,9 +3,15 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const list = (arr) => `<ul>${(arr || []).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
 const STORE = "vybe_campaigns";
+const CLOUD_BUCKET = "product-images";
+let supabaseClient = null;
+let authSession = null;
+let authUser = null;
+let cloudReady = false;
 
 let current = null;       // currently open campaign {id, inputs, result, tasksDone, performance}
 let charts = [];
+let budgetChart = null;
 
 // ---------- Tabs ----------
 document.querySelectorAll("#nav button").forEach((b) =>
@@ -15,23 +21,163 @@ function showTab(id) {
   document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === id));
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === id));
   if (id === "history") renderHistory();
+  if (id === "analysis" && current) renderAnalysis();
+  if (id === "dashboard" && current?.performance) renderDashboard();
   window.scrollTo(0, 0);
 }
 
-// ---------- Storage (browser localStorage) ----------
-const loadAll = () => JSON.parse(localStorage.getItem(STORE) || "[]");
-const saveAll = (a) => localStorage.setItem(STORE, JSON.stringify(a));
-function saveCurrent() {
-  const all = loadAll().filter((c) => c.id !== current.id);
-  all.unshift(current);
+// ---------- Storage: local cache + Supabase cloud projects ----------
+const loadAll = () => {
+  try { return JSON.parse(localStorage.getItem(STORE) || "[]"); }
+  catch { return []; }
+};
+const saveAll = (a) => {
+  try { localStorage.setItem(STORE, JSON.stringify(a)); }
+  catch {
+    try { localStorage.setItem(STORE, JSON.stringify(a.map(({ image, ...campaign }) => campaign))); }
+    catch { localStorage.removeItem(STORE); }
+  }
+};
+function cacheCurrent(campaign) {
+  const all = loadAll().filter((c) => c.id !== campaign.id);
+  all.unshift(campaign);
   saveAll(all);
 }
+async function saveCurrent() {
+  if (!current) return false;
+  cacheCurrent(current);
+  if (!authSession || !supabaseClient) return true;
+  try { await upsertCloudCampaign(current); return true; }
+  catch (err) {
+    console.error("Cloud save failed:", err);
+    setStatus("Saved on this device; cloud save failed: " + err.message, true);
+    return false;
+  }
+}
+async function upsertCloudCampaign(campaign) {
+  const userId = authSession.user.id;
+  let imagePath = campaign.imagePath || null;
+  if (campaign.image && campaign.image.startsWith("data:")) {
+    const blob = await (await fetch(campaign.image)).blob();
+    imagePath = `${userId}/${campaign.id}/product-image`;
+    const { error: uploadError } = await supabaseClient.storage.from(CLOUD_BUCKET)
+      .upload(imagePath, blob, { upsert: true, contentType: blob.type || "image/jpeg" });
+    if (uploadError) throw uploadError;
+    campaign.imagePath = imagePath;
+  }
+  const row = {
+    id: campaign.id, user_id: userId,
+    title: campaign.inputs?.campaignName || "Untitled campaign",
+    business_data: campaign.inputs || {}, outputs: campaign.result || {},
+    app_state: {
+      createdAt: campaign.createdAt, tasksDone: campaign.tasksDone || {},
+      performance: campaign.performance ?? null, insights: campaign.insights ?? null, imagePath
+    },
+    updated_at: new Date().toISOString()
+  };
+  const { error } = await supabaseClient.from("projects").upsert(row, { onConflict: "id" });
+  if (error) throw error;
+}
+async function campaignFromRow(row) {
+  const state = row.app_state || {};
+  let image = null;
+  if (state.imagePath) {
+    const { data } = await supabaseClient.storage.from(CLOUD_BUCKET).createSignedUrl(state.imagePath, 3600);
+    image = data?.signedUrl || null;
+  }
+  return {
+    id: row.id, createdAt: state.createdAt || row.created_at,
+    inputs: row.business_data || {}, result: row.outputs || {},
+    tasksDone: state.tasksDone || {}, performance: state.performance ?? null,
+    insights: state.insights ?? null, imagePath: state.imagePath || null, image
+  };
+}
+async function syncCloudProjects() {
+  if (!supabaseClient || !authSession) return;
+  const { data: rows, error } = await supabaseClient.from("projects").select("*").order("updated_at", { ascending: false });
+  if (error) throw error;
+  const cloudIds = new Set((rows || []).map((r) => r.id));
+  for (const local of loadAll()) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(local.id)) {
+      local.id = crypto.randomUUID();
+      cacheCurrent(local);
+    }
+    if (!cloudIds.has(local.id)) await upsertCloudCampaign(local);
+  }
+  const { data: refreshed, error: refreshError } = await supabaseClient.from("projects").select("*").order("updated_at", { ascending: false });
+  if (refreshError) throw refreshError;
+  const campaigns = await Promise.all((refreshed || []).map(campaignFromRow));
+  saveAll(campaigns);
+  if (current) current = campaigns.find((c) => c.id === current.id) || campaigns[0] || null;
+  else if (campaigns.length) current = campaigns[0];
+  if (current) renderAll();
+  renderHistory();
+  updateAuthUI();
+}
+function updateAuthUI() {
+  const status = $("#authStatus");
+  if (!cloudReady) {
+    status.textContent = "Add Supabase settings in config.js";
+    ["authEmail", "authPassword", "signInBtn", "signUpBtn", "signOutBtn"].forEach((id) => $("#" + id).classList.add("hidden"));
+    return;
+  }
+  const signedIn = !!authUser;
+  status.textContent = signedIn ? `Signed in: ${authUser.email}` : "Sign in to save projects to the cloud";
+  $("#authEmail").classList.toggle("hidden", signedIn);
+  $("#authPassword").classList.toggle("hidden", signedIn);
+  $("#signInBtn").classList.toggle("hidden", signedIn);
+  $("#signUpBtn").classList.toggle("hidden", signedIn);
+  $("#signOutBtn").classList.toggle("hidden", !signedIn);
+}
+async function initializeAuth() {
+  const cfg = window.VYBE_CONFIG || {};
+  const configured = cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY &&
+    !cfg.SUPABASE_URL.includes("YOUR_PROJECT_ID") && !cfg.SUPABASE_ANON_KEY.includes("YOUR_SUPABASE");
+  if (!configured || !window.supabase?.createClient) { cloudReady = false; updateAuthUI(); return; }
+  supabaseClient = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+  cloudReady = true;
+  supabaseClient.auth.onAuthStateChange((event, session) => {
+    authSession = session; authUser = session?.user || null; updateAuthUI();
+    if (event !== "INITIAL_SESSION" && session) syncCloudProjects().catch((err) => setStatus("Cloud sync failed: " + err.message, true));
+  });
+  const { data, error } = await supabaseClient.auth.getSession();
+  if (error) throw error;
+  authSession = data.session; authUser = authSession?.user || null; updateAuthUI();
+  if (authSession) await syncCloudProjects();
+}
+async function signInOrSignUp(mode) {
+  if (!supabaseClient) return alert("Set your Supabase URL and publishable key in config.js first.");
+  const email = $("#authEmail").value.trim(), password = $("#authPassword").value;
+  if (!email || password.length < 6) return alert("Enter a valid email and a password of at least 6 characters.");
+  const method = mode === "signup" ? "signUp" : "signInWithPassword";
+  const { data, error } = await supabaseClient.auth[method]({ email, password });
+  if (error) return alert(error.message);
+  if (mode === "signup" && !data.session) alert("Account created. Check your email to confirm it, then sign in.");
+  else alert(mode === "signup" ? "Account created and signed in." : "Signed in successfully.");
+}
+$("#signInBtn").addEventListener("click", () => signInOrSignUp("signin"));
+$("#signUpBtn").addEventListener("click", () => signInOrSignUp("signup"));
+$("#signOutBtn").addEventListener("click", async () => {
+  const { error } = await supabaseClient.auth.signOut();
+  if (error) return alert(error.message);
+  authSession = null; authUser = null; current = null; imageData = null;
+  $("#imagePreview").src = ""; $("#imagePreview").classList.add("hidden"); saveAll([]);
+  ["analysisOut", "strategyOut", "contentOut", "planOut", "insightOut", "historyOut", "historyAI"].forEach((id) => {
+    const node = document.getElementById(id);
+    if (node) { node.innerHTML = ""; node.className = "empty"; node.textContent = "Sign in to load your saved campaigns."; }
+  });
+  $("#kpis").innerHTML = "";
+  charts.forEach((chart) => chart.destroy()); charts = [];
+  if (budgetChart) { budgetChart.destroy(); budgetChart = null; }
+  updateAuthUI();
+});
 
 // ---------- AI call ----------
 async function callAI(module, data) {
+  if (!authSession) throw new Error("Please sign in first. Gemini requests are available to signed-in users only.");
   const res = await fetch("/.netlify/functions/generate", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authSession.access_token}` },
     body: JSON.stringify({ module, data }),
   });
   const json = await res.json().catch(() => ({ error: "Invalid response from server" }));
@@ -80,10 +226,10 @@ $("#campaignForm").addEventListener("submit", async (e) => {
   setStatus("Generating your campaign with AI… (about 10–20 seconds)");
   try {
     const result = await callAI("campaign", inputs);
-    current = { id: Date.now().toString(), createdAt: new Date().toISOString(), inputs, image: imageData, result, tasksDone: {}, performance: null, insights: null };
-    try { saveCurrent(); } catch { current.image = null; saveCurrent(); } // image may be too big for storage
+    current = { id: crypto.randomUUID(), createdAt: new Date().toISOString(), inputs, image: imageData, result, tasksDone: {}, performance: null, insights: null };
+    const cloudSaved = await saveCurrent();
     renderAll();
-    setStatus("Campaign generated and saved.");
+    setStatus(authSession ? (cloudSaved ? "Campaign generated and saved to your cloud projects." : "Campaign generated and saved on this device, but cloud sync failed. Check the error above.") : "Campaign generated and saved on this device. Sign in to sync it.", authSession && !cloudSaved);
     showTab("analysis");
   } catch (err) {
     setStatus("Error: " + err.message, true);
@@ -134,7 +280,8 @@ function renderAnalysis() {
       <div class="card"><canvas id="budgetChart"></canvas></div>
     </div>`;
   const b = current.result.budgetSplit || [];
-  new Chart($("#budgetChart"), { type: "doughnut", data: { labels: b.map((x) => x.channel), datasets: [{ data: b.map((x) => x.amount), backgroundColor: palette }] }, options: { plugins: { title: { display: true, text: `Budget split (${current.inputs.currency})` } } } });
+  if (budgetChart) budgetChart.destroy();
+  budgetChart = new Chart($("#budgetChart"), { type: "doughnut", data: { labels: b.map((x) => x.channel), datasets: [{ data: b.map((x) => x.amount), backgroundColor: palette }] }, options: { plugins: { title: { display: true, text: `Budget split (${current.inputs.currency})` } } } });
 }
 const palette = ["#4A6658", "#C19A5B", "#8FB3A0", "#E2C79A", "#2F4239", "#A87C3D", "#BFD4C8"];
 
@@ -295,11 +442,24 @@ function renderHistory() {
     </div>`).join("") : `<div class="empty">No saved campaigns yet.</div>`;
 }
 window.openCampaign = (id) => { current = loadAll().find((c) => c.id === id); renderAll(); showTab("analysis"); };
-window.deleteCampaign = (id) => { if (confirm("Delete this campaign?")) { saveAll(loadAll().filter((c) => c.id !== id)); renderHistory(); } };
+window.deleteCampaign = async (id) => {
+  if (!confirm("Delete this campaign?")) return;
+  saveAll(loadAll().filter((c) => c.id !== id));
+  if (authSession && supabaseClient) {
+    const { error } = await supabaseClient.from("projects").delete().eq("id", id);
+    if (error) { alert("Deleted locally, but cloud delete failed: " + error.message); return; }
+    const { data: files } = await supabaseClient.storage.from(CLOUD_BUCKET).list(`${authUser.id}/${id}`);
+    if (files?.length) await supabaseClient.storage.from(CLOUD_BUCKET).remove(files.map((f) => `${authUser.id}/${id}/${f.name}`));
+  }
+  if (current?.id === id) current = loadAll()[0] || null;
+  renderHistory();
+  if (current) renderAll();
+};
 window.reuseCampaign = (id) => {
   const c = loadAll().find((x) => x.id === id), f = $("#campaignForm");
   Object.entries(c.inputs).forEach(([k, v]) => { if (f.elements[k] && k !== "channels") f.elements[k].value = v; });
-  f.querySelectorAll("input[name=channels]").forEach((cb) => (cb.checked = c.inputs.channels.includes(cb.value)));
+  const channels = Array.isArray(c.inputs.channels) ? c.inputs.channels : [];
+  f.querySelectorAll("input[name=channels]").forEach((cb) => (cb.checked = channels.includes(cb.value)));
   showTab("builder");
 };
 $("#historyAIBtn").addEventListener("click", async (e) => {
@@ -313,6 +473,17 @@ $("#historyAIBtn").addEventListener("click", async (e) => {
   e.target.disabled = false;
 });
 
-// ---------- Start: reopen latest campaign ----------
-const latest = loadAll()[0];
-if (latest) { current = latest; renderAll(); }
+// ---------- Start: initialize cloud auth, then reopen the latest campaign ----------
+(async function startApp() {
+  try {
+    await initializeAuth();
+    const latest = loadAll()[0];
+    if (!current && latest) current = latest;
+    if (current) renderAll();
+    renderHistory();
+  } catch (err) {
+    console.error("VYBE startup error:", err);
+    updateAuthUI();
+    setStatus("Startup warning: " + err.message, true);
+  }
+})();
